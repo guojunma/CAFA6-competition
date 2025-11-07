@@ -48,10 +48,9 @@ models/*.h5
 *.pt
 *.h5
 
-# Data
-data/
+# Data files (not src/data/)
+/data/
 *.fasta
-*.txt
 *.csv
 *.tsv
 
