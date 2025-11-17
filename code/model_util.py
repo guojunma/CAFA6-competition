@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import pickle
 import glob
+import os
 import torch
 import esm
 from tqdm import tqdm
@@ -24,7 +25,7 @@ def get_n_params(model):
 class CreateDataset(Dataset):
     def __init__(self, database_dir, df_f, batch_size_ = None):
         self.database_dir = database_dir
-        self.df_ = pd.read_pickle(database_dir+df_f)
+        self.df_ = pd.read_pickle(os.path.join(database_dir, df_f))
         # Drop not divisible batch size
         print(len(self.df_),batch_size_,type(batch_size_))
         if (batch_size_ is not None) and (len(self.df_) % batch_size_ != 0):
@@ -38,7 +39,7 @@ class CreateDataset(Dataset):
         protein_id = self.df_.iloc[idx].protein
         feat_path = f'{self.database_dir}/{protein_id[:2]}/{protein_id}.pkl'
         feat_dic = self.load_pick(feat_path)
-        feat_dic.pop('label', None)
+        # Keep labels for training (don't pop them)
         return feat_dic
     
     def load_pick(self, pkl_f):
@@ -149,14 +150,19 @@ class BatchGvpesmConverter(object):
     def __call__(self, batch):
         batch_size = len(batch)
         proteins = [i['protein'] for i in batch]
-        #true_gos = [i['true_go'] for i in batch]
-        #labels = [self.alphabet_go.tolabel(i['true_go']) for i in batch]
-        #labels = torch.cat(labels, 0)
-        #if self.device is not None:
-        #    labels = labels.to(self.device)
+        
+        # Handle labels if present (for training)
+        has_labels = 'true_go' in batch[0]
+        if has_labels:
+            true_gos = [i['true_go'] for i in batch]
+            labels = [self.alphabet_go.tolabel(i['true_go']) for i in batch]
+            labels = torch.cat(labels, 0)
+            if self.device is not None:
+                labels = labels.to(self.device)
+        
         coords = [i['coords'] for i in batch]
         plddts = [i['plddt']/100 for i in batch]
-        seqs = [i['seq'] for i in batch] #         seqs = self.batch_seq_converter(seqs)
+        seqs = [i['seq'] for i in batch]
         coords, plddts, seqs, tokens, padding_mask =\
             self.batch_coord_converter.from_lists(coords, plddts, seqs, self.device)
         coords,plddts = self.mask_coord(coords,plddts)
@@ -165,14 +171,18 @@ class BatchGvpesmConverter(object):
             seqs = seqs.to(self.device)
         esm1vs = [i['esm1v'] for i in batch]
         esm1vs = self.batch_esm_converter(esm1vs)
-        #print(coords.dtype, plddts.dtype, padding_mask.dtype, esm1vs.dtype)
+        
         batched_dic = {'coords':coords, 
                        'plddts': plddts, 
                        'seqs': seqs,
                        'tokens': tokens, 
                        'padding_mask': padding_mask, 
                        'esm1vs': esm1vs, 
-                       'proteins': proteins} 
-                       #'true_gos': true_gos, 
-                       #'labels': labels
+                       'proteins': proteins}
+        
+        # Add labels if available
+        if has_labels:
+            batched_dic['true_gos'] = true_gos
+            batched_dic['labels'] = labels
+        
         return batched_dic
